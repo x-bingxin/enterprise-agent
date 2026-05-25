@@ -26,6 +26,8 @@ class GlobalStateTracker:
         self.total_cost: float = 0.0
         # 待审批队列
         self.pending_approvals: Dict[str, dict] = {}
+        # 审批决策存储（session_id → decision dict），供 /chat/stream/continue 获取
+        self._approval_decisions: Dict[str, dict] = {}
         # Token 单价（美元/1K tokens）
         self.token_prices = {
             "gpt-4o": {"input": 0.005, "output": 0.015},
@@ -84,6 +86,18 @@ class GlobalStateTracker:
         """移除已处理的审批"""
         self.pending_approvals.pop(session_id, None)
 
+    def store_approval_decision(self, session_id: str, decision: dict):
+        """存储审批决策，供 /chat/stream/continue 获取后恢复图"""
+        self._approval_decisions[session_id] = decision
+
+    def get_approval_decision(self, session_id: str) -> dict | None:
+        """获取审批决策（不删除）"""
+        return self._approval_decisions.get(session_id)
+
+    def pop_approval_decision(self, session_id: str) -> dict | None:
+        """获取并删除审批决策"""
+        return self._approval_decisions.pop(session_id, None)
+
     def get_pending_approvals_list(self) -> list:
         """获取待审批工单列表"""
         return [
@@ -135,3 +149,7 @@ class GlobalStateTracker:
             },
             "pending_approvals": self.get_pending_approvals_list(),
         }
+
+
+# 模块级单例，供所有路由和模块共享
+tracker = GlobalStateTracker()

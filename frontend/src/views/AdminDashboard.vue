@@ -77,8 +77,18 @@ function connectAdminWS() {
         break
       
       case 'heartbeat':
-        if (data.data.active_sessions) {
-          activeSessions.value = new Map(Object.entries(data.data.active_sessions))
+        const {active_sessions, pending_approvals, total_tokens, total_cost} = data.data
+        if (active_sessions) {
+          activeSessions.value = new Map(Object.entries(active_sessions))
+        }
+        if (pending_approvals) {
+          pendingApprovals.value = pending_approvals
+        }
+        if (total_tokens) {
+          totalTokens.value = total_tokens
+        }
+        if (total_cost) {
+          totalCost.value = total_cost
         }
     }
   }
@@ -91,13 +101,24 @@ function updateNodeStatus(nodeId: string, status: 'idle' | 'active' | 'completed
 
 async function handleApproval(sessionId: string, decision: 'approved' | 'rejected') {
   const comment = prompt('请输入审批意见（可选）:') || ''
+
+  const response = await fetch('http://localhost:8000/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'approval_decision',
+      session_id: sessionId,
+      decision: decision,
+      comment: comment
+    })
+  })
   
-  ws.value?.send(JSON.stringify({
-    type: 'approval_decision',
-    session_id: sessionId,
-    decision: decision,
-    comment: comment
-  }))
+  // ws.value?.send(JSON.stringify({
+  //   type: 'approval_decision',
+  //   session_id: sessionId,
+  //   decision: decision,
+  //   comment: comment
+  // }))
   
   // 从待审批列表移除
   pendingApprovals.value = pendingApprovals.value.filter(a => a.session_id !== sessionId)

@@ -35,5 +35,6 @@ async def lookup_order(order_id: str) -> str:
             "payment_method": "支付宝"
         }
     }
+    order_id = order_id.strip().upper()
     order = mock_orders.get(order_id, {"error": f"订单 {order_id} 不存在"})
     return json.dumps(order, ensure_ascii=False)

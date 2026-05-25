@@ -63,13 +63,9 @@ async def classify_intent_node(
         SystemMessage(content=classification_prompt),
         HumanMessage(content=f"用户消息: {messages[-1].content if hasattr(messages[-1], 'content') else str(messages[-1])}")
     ]
-    try:
-        # ✅ 使用 LangChain 的 ainvoke
-        response = await llm.ainvoke(classify_messages)
-        print("classify response:", response)
-        result_text = response.content
-    except Exception as e:
-        print("LLM 分类失败:", e)
+    # ✅ 使用 LangChain 的 ainvoke
+    response = await llm.ainvoke(classify_messages)
+    result_text = response.content
     
     # 提取 JSON
     json_match = re.search(r'\{.*\}', result_text, re.DOTALL)

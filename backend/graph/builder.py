@@ -43,7 +43,7 @@ def build_enterprise_agent(
     # 注意：需要 LLM 的节点用 partial 注入 llm 参数
     builder.add_node("authenticate", authenticate_node)
     builder.add_node("classify", partial(classify_intent_node, llm=llm))
-    builder.add_node("route", route_by_category_node)
+    builder.add_node("route_by_category", route_by_category_node)
     builder.add_node("query_order", partial(query_order_node, llm=llm))
     builder.add_node("auto_refund", partial(auto_refund_node, llm=llm))
     builder.add_node("human_review", human_review_node)
@@ -67,11 +67,11 @@ def build_enterprise_agent(
     )
 
     # 分类 → 路由
-    builder.add_edge("classify", "route")
+    builder.add_edge("classify", "route_by_category")
 
     # 路由 → 各业务节点
     builder.add_conditional_edges(
-        "route",
+        "route_by_category",
         lambda s: s["next_step"],
         {
             "query_order": "query_order",

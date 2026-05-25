@@ -22,6 +22,127 @@ onMounted(() => {
   })
 })
 
+async function processSSEStream(response: Response) {
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('No response body')
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue
+
+      const payload = line.slice(6)
+
+      if (payload === '[DONE]') {
+        const streamingMsg = messages.value[messages.value.length - 1]
+        if (streamingMsg && streamingMsg.role === 'assistant') {
+          streamingMsg.isStreaming = false
+        }
+        continue
+      }
+
+      try {
+        const event = JSON.parse(payload)
+
+        switch (event.type) {
+          case 'node_start':
+            console.log(`[Agent] 节点开始: ${event.node}`)
+            break
+
+          case 'node_end':
+            console.log(`[Agent] 节点结束: ${event.node}`)
+            break
+
+          case 'token': {
+            const streamingMsg = messages.value[messages.value.length - 1]
+            if (streamingMsg && streamingMsg.role === 'assistant' && streamingMsg.isStreaming) {
+              streamingMsg.content += event.content
+              scrollToBottom()
+            }
+            break
+          }
+
+          case 'message': {
+            const lastMsg = messages.value[messages.value.length - 1]
+            if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
+              lastMsg.content = event.content
+              lastMsg.isStreaming = false
+              scrollToBottom()
+            }
+            break
+          }
+
+          case 'review_required': {
+            isWaitingApproval.value = true
+            const streamingMsg = messages.value[messages.value.length - 1]
+            if (streamingMsg && streamingMsg.role === 'assistant' && streamingMsg.isStreaming) {
+              streamingMsg.isStreaming = false
+            }
+            messages.value.push({
+              role: 'system',
+              content: '⏳ 您的请求需要人工审核，请稍候...',
+              timestamp: new Date()
+            })
+            break
+          }
+
+          case 'error': {
+            const streamingMsg = messages.value[messages.value.length - 1]
+            if (streamingMsg && streamingMsg.isStreaming) {
+              streamingMsg.content = `❌ 错误: ${event.message}`
+              streamingMsg.isStreaming = false
+            }
+            break
+          }
+        }
+      } catch {
+        // skip unparseable events
+      }
+    }
+  }
+}
+
+async function continueAfterApproval() {
+  messages.value.push({
+    role: 'assistant',
+    content: '',
+    isStreaming: true,
+    timestamp: new Date()
+  })
+
+  try {
+    const response = await fetch('http://localhost:8000/chat/stream/continue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId.value })
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+
+    await processSSEStream(response)
+  } catch (err) {
+    console.error('继续请求失败:', err)
+    const streamingMsg = messages.value[messages.value.length - 1]
+    if (streamingMsg && streamingMsg.role === 'assistant' && streamingMsg.isStreaming) {
+      streamingMsg.content = '抱歉，请求失败，请重试。'
+      streamingMsg.isStreaming = false
+    }
+  } finally {
+    isWaitingApproval.value = false
+  }
+}
+
 async function sendMessage() {
   if (!inputText.value.trim() || isWaitingApproval.value) return
 
@@ -57,78 +178,11 @@ async function sendMessage() {
       throw new Error(`HTTP ${response.status}`)
     }
 
-    const reader = response.body?.getReader()
-    if (!reader) throw new Error('No response body')
+    await processSSEStream(response)
 
-    const decoder = new TextDecoder()
-    let buffer = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-
-        const payload = line.slice(6)
-
-        if (payload === '[DONE]') {
-          const streamingMsg = messages.value[messages.value.length - 1]
-          if (streamingMsg && streamingMsg.role === 'assistant') {
-            streamingMsg.isStreaming = false
-          }
-          continue
-        }
-
-        try {
-          const event = JSON.parse(payload)
-
-          switch (event.type) {
-            case 'node_start':
-              console.log(`[Agent] 节点开始: ${event.node}`)
-              break
-
-            case 'token': {
-              const streamingMsg = messages.value[messages.value.length - 1]
-              if (streamingMsg && streamingMsg.role === 'assistant' && streamingMsg.isStreaming) {
-                streamingMsg.content += event.content
-                scrollToBottom()
-              }
-              break
-            }
-
-            case 'message': {
-              const lastMsg = messages.value[messages.value.length - 1]
-              if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
-                lastMsg.content = event.content
-                lastMsg.isStreaming = false
-                scrollToBottom()
-              }
-              break
-            }
-
-            case 'review_required': {
-              isWaitingApproval.value = true
-              const streamingMsg = messages.value[messages.value.length - 1]
-              if (streamingMsg && streamingMsg.role === 'assistant' && streamingMsg.isStreaming) {
-                streamingMsg.isStreaming = false
-              }
-              messages.value.push({
-                role: 'system',
-                content: '⏳ 您的请求需要人工审核，请稍候...',
-                timestamp: new Date()
-              })
-              break
-            }
-          }
-        } catch {
-          // skip unparseable events
-        }
-      }
+    // 如果触发了人工审核，自动连接 continue 端点等待审批结果
+    if (isWaitingApproval.value) {
+      await continueAfterApproval()
     }
   } catch (err) {
     console.error('请求失败:', err)
